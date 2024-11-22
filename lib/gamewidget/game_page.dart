@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ffi';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -15,42 +16,44 @@ class _GamePageState extends State<GamePage>
     with SingleTickerProviderStateMixin {
   final _random = Random();
   List<int> _numbers = [];
-  List<List<int>> _collectedNumbers = [];
   int _nextNumber = 0;
   int countGenerate = 9;
   int timeLeft = 0;
   Timer? _timer;
   final Map<int, int> _uniqueRandomImageIndexes = {};
-
-  late AnimationController _shakeController;
-  late Animation<double> _shakeAnimation;
+  String _gameMode = "Min Max"; 
   bool _showMessage = false;
   String _message = "";
+  late AnimationController _controller;
+  late Animation<double> _animation;
+  int _lives = 3;
 
   @override
   void initState() {
     super.initState();
     _generateRandomNumbers();
     _startGame();
-
-    // Initialize shake animation
-    _shakeController = AnimationController(
-      duration: const Duration(milliseconds: 500),
+    _controller = AnimationController(
       vsync: this,
-    )..addStatusListener((status) {
-        if (status == AnimationStatus.completed) {
-          _shakeController.reset();
-        }
-      });
-
-    _shakeAnimation = Tween<double>(begin: 0, end: 10).animate(
-      CurvedAnimation(parent: _shakeController, curve: Curves.elasticIn),
+      duration: Duration(seconds: 60),
     );
+    _animation = Tween<double>(begin: 10, end: 85).animate(CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeInOut,
+    ));
+    _controller.forward();
+  }
+
+  @override
+  void dispose() {
+    super.dispose();
+    _controller.dispose();
   }
 
   void _startGame() {
     setState(() {
       timeLeft = 60;
+      _lives = 3;
     });
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (timeLeft > 0) {
@@ -60,62 +63,62 @@ class _GamePageState extends State<GamePage>
       } else {
         timer.cancel();
         Future.delayed(const Duration(seconds: 1), () {
-          _finalResultDisplay("Time's Up!", "Better luck next time",
-              "Restart GAME", "Quit GAME");
+          _finalResultDisplay("Time's Up!", "The sun has destroyed the Earth",
+              "Rise Again", "End the Saga");
         });
       }
     });
   }
 
-  void _generateRandomNumbers() {
-    final random = Random();
-    final Set<int> usedIndexes = {};
-    setState(() {
-      _numbers = List.generate(countGenerate, (_) => _random.nextInt(200) + 10);
-      _numbers.shuffle();
-      _nextNumber = _numbers.reduce((a, b) => a < b ? a : b);
-      _collectedNumbers = [];
-      for (int i = 0; i < _numbers.length; i++) {
-        int newIndex;
+void _generateRandomNumbers() {
+  final random = Random();
+  final Set<int> usedIndexes = {};
+  final Set<int> uniqueNumbers = {};
+  setState(() {
+    while (uniqueNumbers.length < countGenerate) {
+      uniqueNumbers.add(random.nextInt(200) + 10);
+    }
 
-        // Generate a unique random index
-        do {
-          newIndex = random.nextInt(14) + 1; // Random number between 1 and 14
-        } while (usedIndexes.contains(newIndex));
+    _numbers = uniqueNumbers.toList();
+    _numbers.shuffle();
 
-        usedIndexes.add(newIndex); // Mark this index as used
-        _uniqueRandomImageIndexes[_numbers[i]] =
-            newIndex; // Map number to image
-      }
-    });
-  }
+    _nextNumber = _gameMode == "Min Max"
+        ? _numbers.reduce((a, b) => a < b ? a : b)
+        : _numbers.reduce((a, b) => a > b ? a : b);
+    for (int i = 0; i < _numbers.length; i++) {
+      int newIndex;
+      do {
+        newIndex = random.nextInt(14) + 1; 
+      } while (usedIndexes.contains(newIndex) || newIndex == 8); 
+
+      usedIndexes.add(newIndex); 
+      _uniqueRandomImageIndexes[_numbers[i]] = newIndex; 
+    }
+  });
+}
+
 
   void _onNumberTap(int number, int imageIndex) async {
-    if (number == _nextNumber) {
+    if ((_gameMode == "Min Max" && number == _nextNumber) ||
+        (_gameMode == "Max Min" && number == _nextNumber)) {
       setState(() {
-        // Add the number and image to the collected numbers
-        _collectedNumbers.add([number, imageIndex]);
-        _collectedNumbers.sort((a, b) =>
-            a[0].compareTo(b[0])); // Ensure sorting after each collection
-
-        // Remove the tapped number
         _numbers.remove(number);
-
-        // Update _uniqueRandomImageIndexes
         _uniqueRandomImageIndexes.remove(number);
 
-        // Update the next smallest number
         if (_numbers.isNotEmpty) {
-          _nextNumber = _numbers.reduce((a, b) => a < b ? a : b);
+          _nextNumber = _gameMode == "Min Max"
+              ? _numbers.reduce((a, b) => a < b ? a : b)
+              : _numbers.reduce((a, b) => a > b ? a : b);
         }
       });
       _checkFinalResult();
     } else {
-      _shakeController.forward();
       _showErrorMessage("Oops wrong guess!");
+      _lives--;
       if (await Vibration.hasVibrator() ?? false) {
         Vibration.vibrate(duration: 200);
       }
+      _checkFinalResult();
     }
   }
 
@@ -136,251 +139,271 @@ class _GamePageState extends State<GamePage>
     if (timeLeft == 0 || _numbers.isEmpty) {
       String title = _numbers.isEmpty ? "Congratulations!" : "Time's Up!";
       String message = _numbers.isEmpty
-          ? "You collected all the numbers!"
-          : "Better luck next time!";
+          ? "You save the Earth!"
+          : "The sun has destroyed the Earth";
 
-      // Delay execution for 1.5 seconds
       Future.delayed(const Duration(seconds: 1), () {
-        _finalResultDisplay(title, message, "Restart Game", "Quit Game");
+        _finalResultDisplay(title, message, "Rise Again", "End the Saga");
         _timer?.cancel();
+        _controller.stop();
       });
+    }
+
+    if (_lives == 0) {
+      _finalResultDisplay("No more lives", "Try to protect our Earth",
+          "Rise Again", "End the Saga");
+      _timer?.cancel();
+      _controller.stop();
     }
   }
 
+ void _finalResultDisplay(
+    String title, String message, String startGame, String quitGame) {
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) => Dialog(
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(20)),
+      ),
+      child: Container(
+        width: MediaQuery.of(context).size.width * 0.9, 
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.9),
+          borderRadius: const BorderRadius.all(Radius.circular(20)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Title
+            Text(
+              title,
+              style: GoogleFonts.spicyRice(
+                  color: const Color(0xFFFFBE26),
+                  fontSize: 41, 
+                  fontWeight: FontWeight.bold),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 20),
+            Text(
+              message,
+              style: GoogleFonts.spicyRice(
+                  color: const Color(0xFFFFBE26),
+                  fontSize: 30, 
+                  fontWeight: FontWeight.bold),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 30),
+            // Start Game Button
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFFFBE26), 
+                padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              onPressed: () {
+                Navigator.of(context).pop();
+                _restartGame();
+              },
+              child: Text(
+                startGame,
+                style: GoogleFonts.spicyRice(
+                    color: Colors.white,
+                    fontSize: 28, 
+                    fontWeight: FontWeight.bold),
+              ),
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              onPressed: () {
+                Navigator.of(context).pop();
+                Navigator.of(context).pop();
+              },
+              child: Text(
+                quitGame,
+                style: GoogleFonts.spicyRice(
+                    color: Colors.white,
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+
   void _restartGame() {
-    // Cancel any existing timer
     _timer?.cancel();
-
-    // Reset game state
     setState(() {
-      _collectedNumbers.clear();
-      _generateRandomNumbers(); // Regenerate numbers and reset _nextNumber
-      timeLeft = 60; // Reset timer
+      _generateRandomNumbers();
+      timeLeft = 60;
+      _controller.reset();
+      _controller.forward();
+      _lives = 3;
     });
-
-    // Start the game timer again
     _startGame();
   }
 
-  void _finalResultDisplay(
-      String title, String message, String startGame, String quitGame) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => Scaffold(
-        backgroundColor: Colors.transparent,
-        body: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(0),
-            child: Container(
-              width: 380,
-              height: 400,
-              decoration: const BoxDecoration(
-                image: DecorationImage(
-                  image: AssetImage('assets/images/menu-number.png'),
-                  fit: BoxFit.cover,
-                ),
-                borderRadius: BorderRadius.all(Radius.circular(15)),
+  Widget randomNumberGrid() {
+    return GridView.builder(
+      shrinkWrap: true, 
+      physics:
+          const NeverScrollableScrollPhysics(), 
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3, 
+        crossAxisSpacing: 8.0, 
+        mainAxisSpacing: 8.0, 
+      ),
+      itemCount: _numbers.length,
+      itemBuilder: (context, index) {
+        int number = _numbers[index];
+        int? imageIndex = _uniqueRandomImageIndexes[number];
+        if (imageIndex == null) {
+          return const SizedBox();
+        }
+
+        return GestureDetector(
+          onTap: () => _onNumberTap(number, imageIndex),
+          child: Container(
+            decoration: BoxDecoration(
+              image: DecorationImage(
+                image: AssetImage("assets/images/planet$imageIndex.png"),
+                fit: BoxFit.cover,
               ),
-              child: Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(20.0),
-                  child: SingleChildScrollView(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          title,
-                          style: GoogleFonts.spicyRice(color: Color(0xFFFFBE26),
-                              fontSize: 42,
-                              fontWeight: FontWeight.bold),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 20),
-                        Text(
-                          message,
-                          style:  GoogleFonts.spicyRice(color: Color(0xFFFFBE26),
-                              fontSize: 23,
-                              fontWeight: FontWeight.bold),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 30),
-                        GestureDetector(
-                          onTap: () {
-                            Navigator.of(context).pop();
-                            _restartGame();
-                          },
-                          child: Text(
-                            startGame,
-                            style:  GoogleFonts.spicyRice(color: Color(0xFFFFBE26),
-                              fontSize: 40,
-                              fontWeight: FontWeight.bold),
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-                        const SizedBox(height: 15),
-                        GestureDetector(
-                          onTap: () {
-                            Navigator.of(context).pop();
-                            Navigator.of(context).pop();
-                          },
-                          child: Text(
-                            quitGame,
-                            style:  GoogleFonts.spicyRice(color: Color(0xFFFFBE26),
-                              fontSize: 28,
-                              fontWeight: FontWeight.bold),
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-                      ],
+            ),
+            child: Center(
+              child: Stack(
+                children: [
+                  Text(
+                    '$number',
+                    style: TextStyle(
+                      fontSize: 35,
+                      fontWeight: FontWeight.bold,
+                      foreground: Paint()
+                        ..style = PaintingStyle.stroke
+                        ..strokeWidth = 6.0
+                        ..color = const Color(0xFF4C1884),
                     ),
                   ),
-                ),
+                  Text(
+                    '$number',
+                    style: GoogleFonts.spicyRice(
+                      fontSize: 38,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget collectedNumbersList() {
-    return Padding(
-      padding: const EdgeInsets.only(top: 250.0),
-      child: Wrap(
-        spacing: 10.0,
-        runSpacing: 5.0, 
-        children: _collectedNumbers.map((pair) {
-          int number = pair[0];
-          int imageIndex = pair[1];
-          return Padding(
-            padding: const EdgeInsets.symmetric(vertical: 0.0),
-            child: Container(
-              padding: const EdgeInsets.all(16),
-              width: 110,
-              height: 110,
-              decoration: BoxDecoration(
-                  image: DecorationImage(
-                      image:
-                          AssetImage("assets/images/planet$imageIndex.png"))),
-              child: Center(
-                child: Stack(
-                  children: [
-                    Text(
-                      '$number',
-                      style: TextStyle(
-                        fontSize: 35,
-                        fontWeight: FontWeight.bold,
-                        foreground: Paint()
-                          ..style = PaintingStyle.stroke
-                          ..strokeWidth = 6.0
-                          ..color = const Color(0xFF4C1884),
-                      ),
-                    ),
-                    Text(
-                      '$number',
-                      style: GoogleFonts.spicyRice(
-                        fontSize: 38,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        }).toList(),
-      ),
-    );
-  }
-
-  Widget randomNumberRow() {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: _numbers.map((number) {
-          // Null check before accessing the map
-          int? imageIndex = _uniqueRandomImageIndexes[number];
-          if (imageIndex == null) {
-            return SizedBox(); 
-          }
-
-          return GestureDetector(
-            onTap: () => _onNumberTap(number, imageIndex),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 1.0),
-              child: Container(
-                width: 120,
-                height: 120,
-                decoration: BoxDecoration(
-                  image: DecorationImage(
-                    image: AssetImage("assets/images/planet$imageIndex.png"),
-                    fit: BoxFit.cover,
-                  ),
-                ),
-                child: Center(
-                  child: Stack(
-                    children: [
-                      Text(
-                        '$number',
-                        style: TextStyle(
-                          fontSize: 35,
-                          fontWeight: FontWeight.bold,
-                          foreground: Paint()
-                            ..style = PaintingStyle.stroke
-                            ..strokeWidth = 6.0
-                            ..color = const Color(0xFF4C1884),
-                        ),
-                      ),
-                      Text(
-                        '$number',
-                        style: GoogleFonts.spicyRice(
-                          fontSize: 38,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          );
-        }).toList(),
-      ),
+        );
+      },
     );
   }
 
   Widget _buildGameContent() {
-    return Transform.translate(
-      offset: Offset(_shakeAnimation.value, 0),
-      child: Stack(
-        children: [
-          Container(
-            decoration: const BoxDecoration(
-              image: DecorationImage(
-                image: AssetImage("assets/images/bg-game.jpg"),
-                fit: BoxFit.cover,
-              ),
+    return Stack(
+      children: [
+        Container(
+          decoration: const BoxDecoration(
+            image: DecorationImage(
+              image: AssetImage("assets/images/bg-game.jpg"),
+              fit: BoxFit.cover,
             ),
           ),
-          Positioned(
-              top: -135,
-              right: 0,
-              left: 0,
-              child: Image.asset(
-                "assets/images/sun.png",
-                fit: BoxFit.cover,
-              )),
-          Align(
-            alignment: Alignment.topLeft,
-            child: Padding(
-              padding: const EdgeInsets.only(top: 300.0, left: 15),
-              child: Container(
-                padding: const EdgeInsets.all(8.0),
-                child: Text(
+        ),
+        Positioned(
+            top: 80,
+            right: 0,
+            left: 0,
+            child: Center(
+              child: Text(
+                "Tap the correct ascending order of numbers before the sun strikes the earth",
+                style: GoogleFonts.spicyRice(
+                  fontSize: 25,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            )),
+        Align(
+          alignment: Alignment.topCenter,
+          child: Padding(
+            padding: const EdgeInsets.only(top: 190),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.start,
+              children: [
+                AnimatedBuilder(
+                  animation: _animation,
+                  builder: (context, child) {
+                    // Move the sun image only
+                    return Transform.translate(
+                      offset:
+                          Offset(_animation.value, 0), 
+                      child: child,
+                    );
+                  },
+                  child: Image.asset(
+                    "assets/images/sun.png",
+                    width: 200,
+                    height: 200,
+                  ),
+                ),
+                const SizedBox(
+                  width: 40,
+                ),
+                Container(
+                  width: 200,
+                  child: Image.asset(
+                    "assets/images/earth.png",
+                    fit: BoxFit.cover,
+                    width: 200,
+                    height: 200,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        Align(
+          alignment: Alignment.topLeft,
+          child: Padding(
+            padding: const EdgeInsets.only(top: 420.0, left: 15),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize
+                      .min,
+                  children: [
+                    for (int i = 0; i < _lives; i++)
+                      const Padding(
+                        padding: EdgeInsets.only(
+                            right: 4.0),
+                        child: Icon(
+                          Icons.favorite,
+                          color: Colors.red,
+                          size: 29,
+                        ),
+                      ),
+                  ],
+                ),
+                Text(
                   'Timer: $timeLeft',
                   style: GoogleFonts.spicyRice(
                     fontSize: 28,
@@ -388,59 +411,87 @@ class _GamePageState extends State<GamePage>
                     color: Colors.white,
                   ),
                 ),
-              ),
+                DropdownButton<String>(
+                  value: _gameMode,
+                  dropdownColor: const Color(0xFF4D1884),
+                  onChanged: (String? newMode) {
+                    if (newMode != null && newMode != _gameMode) {
+                      setState(() {
+                        _gameMode = newMode;
+                        _restartGame();
+                      });
+                    }
+                  },
+                  items: <String>["Min Max", "Max Min"]
+                      .map<DropdownMenuItem<String>>((String value) {
+                    return DropdownMenuItem<String>(
+                      value: value,
+                      child: Text(
+                        value,
+                        style: GoogleFonts.spicyRice(
+                          fontSize: 28,
+                          color: Colors.white,
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                  // Remove underline
+                  underline: const SizedBox(),
+                  icon: const Icon(
+                    Icons.arrow_drop_down, 
+                    color: Colors.white, 
+                    size: 36, 
+                  ),
+                ),
+              ],
             ),
           ),
-          Align(
-            alignment: Alignment.topCenter,
-            child: Padding(
-              padding: const EdgeInsets.only(top: 120.0),
-              child: collectedNumbersList(),
+        ),
+        Align(
+          alignment: Alignment.center,
+          child: Padding(
+            padding: const EdgeInsets.only(top: 390, left: 16, right: 16),
+            child: SizedBox(
+              child: randomNumberGrid(),
             ),
           ),
-          Align(
-            alignment: Alignment.bottomCenter,
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: SizedBox(
-                height: 140,
-                child: randomNumberRow(),
-              ),
-            ),
-          ),
-          errorMessage()
-        ],
-      ),
+        ),
+        errorMessage(),
+      ],
     );
   }
 
   Widget errorMessage() {
-    return AnimatedOpacity(
-      opacity: _showMessage ? 1.0 : 0.0,
-      duration: const Duration(seconds: 1),
-      child: Center(
-        child: Text(
-            _message,
-            style: GoogleFonts.spicyRice(
-              fontSize: 38,
-              color: Colors.white,
-              fontWeight: FontWeight.bold
+    if (_showMessage) {
+      return Positioned(
+        bottom: 25,
+        left: 0,
+        right: 0,
+        child: Center(
+          child: Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.red.withOpacity(0.8),
+              borderRadius: BorderRadius.circular(10),
             ),
-          ), 
+            child: Text(
+              _message,
+              style: GoogleFonts.spicyRice(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+          ),
         ),
       );
+    }
+    return const SizedBox.shrink();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: AnimatedBuilder(
-        animation: _shakeController,
-        builder: (context, child) {
-          return _buildGameContent();
-        },
-      ),
-    );
+        backgroundColor: Colors.transparent, body: _buildGameContent());
   }
 }
